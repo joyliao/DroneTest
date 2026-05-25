@@ -498,6 +498,15 @@ body::before{
         <button class="count-btn" data-n="30">30 題</button>
         <button class="count-btn" data-n="50">50 題</button>
         <button class="count-btn" data-n="100">100 題</button>
+        <button class="count-btn" data-n="custom" id="btn-custom">自訂</button>
+      </div>
+      <div id="custom-count-wrap" style="display:none;margin-top:10px;align-items:center;gap:8px;flex-wrap:wrap;">
+        <input type="number" id="custom-count-input" min="1" max="587" placeholder="輸入題數（1–587）"
+          style="width:180px;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;background:var(--paper);color:var(--ink);outline:none;transition:border .15s;"
+          oninput="onCustomCountInput(this)"
+          onfocus="this.style.borderColor='var(--amber)'"
+          onblur="this.style.borderColor='var(--border)'">
+        <span id="custom-count-hint" style="font-size:12px;color:#9a8a74;"></span>
       </div>
     </div>
     
@@ -614,9 +623,30 @@ function init(){
     b.addEventListener('click',()=>{
       document.querySelectorAll('.count-btn').forEach(x=>x.classList.remove('selected'));
       b.classList.add('selected');
-      selectedCount=parseInt(b.dataset.n);
+      const wrap=document.getElementById('custom-count-wrap');
+      if(b.dataset.n==='custom'){
+        wrap.style.display='flex';
+        selectedCount=0; // will be validated on start
+        document.getElementById('custom-count-input').focus();
+      } else {
+        wrap.style.display='none';
+        selectedCount=parseInt(b.dataset.n);
+        document.getElementById('custom-count-hint').textContent='';
+      }
     });
   });
+}
+
+function onCustomCountInput(el){
+  const pool=QUESTIONS.filter(q=>selectedChapters.has(q.chapter));
+  const max=pool.length;
+  let v=parseInt(el.value);
+  const hint=document.getElementById('custom-count-hint');
+  if(!el.value){hint.textContent='';selectedCount=0;return;}
+  if(isNaN(v)||v<1){v=1;el.value=1;}
+  if(v>max){v=max;el.value=max;}
+  selectedCount=v;
+  hint.textContent=`目前章節共 ${max} 題，已設定 ${v} 題`;
 }
 
 function buildChapterGrid(){
@@ -654,7 +684,14 @@ function shuffle(arr){
 function startQuiz(){
   const pool=QUESTIONS.filter(q=>selectedChapters.has(q.chapter));
   if(!pool.length){alert('請選擇至少一個章節');return;}
-  const n=Math.min(selectedCount,pool.length);
+  // If custom mode but no valid number entered
+  const customBtn=document.getElementById('btn-custom');
+  if(customBtn&&customBtn.classList.contains('selected')&&(!selectedCount||selectedCount<1)){
+    alert('請輸入有效的題目數量');
+    document.getElementById('custom-count-input').focus();
+    return;
+  }
+  const n=Math.min(selectedCount||10,pool.length);
   quizQuestions=shuffle([...pool]).slice(0,n);
   currentIdx=0;correctCount=0;wrongCount=0;
   userAnswers=new Array(n).fill(null);
