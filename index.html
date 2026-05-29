@@ -469,6 +469,97 @@ body::before{
 .wave-bars span:nth-child(2){animation-delay:.15s;}
 .wave-bars span:nth-child(3){animation-delay:.3s;}
 .wave-bars span:nth-child(4){animation-delay:.15s;}
+
+/* ── AI 解析區塊 ── */
+.explanation-wrap{
+  margin-top:20px;
+  border:1.5px solid var(--border);
+  border-radius:12px;
+  overflow:hidden;
+  background:#fff;
+}
+.explanation-header{
+  display:flex;align-items:center;gap:10px;
+  padding:12px 16px;
+  background:linear-gradient(135deg,#1a1208 0%,#3a2808 100%);
+  color:var(--amber-light);
+  font-size:13px;font-weight:700;
+}
+.explanation-header .ai-badge{
+  font-size:10px;letter-spacing:.1em;
+  background:rgba(240,192,64,.2);
+  border:1px solid rgba(240,192,64,.4);
+  padding:2px 8px;border-radius:20px;
+  color:var(--amber-light);
+}
+.explanation-body{padding:16px;}
+
+/* Loading skeleton */
+.expl-loading{
+  display:flex;flex-direction:column;gap:8px;padding:4px 0;
+}
+.expl-skeleton{
+  height:12px;border-radius:4px;
+  background:linear-gradient(90deg,#f0e8d8 25%,#e8dcc8 50%,#f0e8d8 75%);
+  background-size:200% 100%;
+  animation:shimmer 1.4s infinite;
+}
+@keyframes shimmer{
+  0%{background-position:200% 0}
+  100%{background-position:-200% 0}
+}
+
+/* Option explanation cards */
+.opt-expl-list{display:flex;flex-direction:column;gap:10px;}
+.opt-expl-card{
+  border-radius:8px;padding:12px 14px;
+  border-left:4px solid var(--border);
+  background:var(--paper);
+}
+.opt-expl-card.is-correct{
+  border-left-color:var(--green);
+  background:rgba(26,107,58,.04);
+}
+.opt-expl-card.is-wrong-chosen{
+  border-left-color:var(--red);
+  background:rgba(192,57,43,.04);
+}
+.opt-expl-card.is-unchosen{
+  border-left-color:#d0c0a8;
+  background:#faf8f4;
+}
+.opt-expl-head{
+  display:flex;align-items:center;gap:8px;margin-bottom:6px;
+}
+.opt-expl-letter{
+  width:24px;height:24px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:11px;font-weight:700;
+  font-family:'Noto Serif TC',serif;
+}
+.is-correct .opt-expl-letter{background:var(--green);color:#fff;}
+.is-wrong-chosen .opt-expl-letter{background:var(--red);color:#fff;}
+.is-unchosen .opt-expl-letter{background:#d0c0a8;color:#7a6a54;}
+.opt-expl-tag{
+  font-size:10px;font-weight:700;letter-spacing:.06em;
+  padding:2px 8px;border-radius:20px;
+}
+.is-correct .opt-expl-tag{background:rgba(26,107,58,.12);color:var(--green);}
+.is-wrong-chosen .opt-expl-tag{background:rgba(192,57,43,.1);color:var(--red);}
+.is-unchosen .opt-expl-tag{background:#ece4d4;color:#7a6a54;}
+.opt-expl-option-text{
+  font-size:12px;font-weight:600;color:var(--ink);flex:1;line-height:1.4;
+}
+.opt-expl-desc{
+  font-size:13px;color:#4a3a28;line-height:1.7;
+  padding-left:32px;
+}
+
+.expl-error{
+  font-size:13px;color:#a06030;padding:8px 12px;
+  background:#fff8e8;border-radius:8px;
+  border:1px solid #f0d080;
+}
 </style>
 </head>
 <body>
@@ -746,6 +837,13 @@ function renderQuestion(){
     <div class="q-text">${q.q}</div>
     <div class="options">${optHTML}</div>
     <div class="feedback" id="feedback"></div>
+    <div class="explanation-wrap" id="explanation-wrap" style="display:none">
+      <div class="explanation-header">
+        <span>📖 選項解析</span>
+        <span class="ai-badge">AI 即時生成</span>
+      </div>
+      <div class="explanation-body" id="explanation-body"></div>
+    </div>
   `;
   
   document.getElementById('next-wrap').classList.remove('show');
@@ -787,9 +885,14 @@ function selectOption(key){
   
   // TTS: speak answer if autoRead enabled
   if(ttsAutoRead){
-    // slight delay so UI updates first
     setTimeout(()=>speakAnswer(q, key, correct), 150);
   }
+  
+  // AI explanation
+  currentExplQ = q;
+  currentExplChosen = key;
+  currentExplCorrect = correct;
+  fetchExplanation(q, key, correct);
 }
 
 function nextQuestion(){
@@ -855,6 +958,148 @@ function showResult(){
 
 function retryQuiz(){
   startQuiz();
+}
+
+// ── AI 解析 ────────────────────────────────────────────────────────────────
+// 解析快取：避免同一題重複呼叫
+const explCache = {};
+
+async function fetchExplanation(q, chosenKey, correctKey){
+  const wrap = document.getElementById('explanation-wrap');
+  const body = document.getElementById('explanation-body');
+  if(!wrap||!body) return;
+
+  wrap.style.display='block';
+
+  // 檢查快取
+  const cacheKey = q.chapter + '_' + q.num;
+  if(explCache[cacheKey]){
+    renderExplanations(q, chosenKey, correctKey, explCache[cacheKey]);
+    return;
+  }
+
+  body.innerHTML=`<div class="expl-loading">
+    <div class="expl-skeleton" style="width:80%"></div>
+    <div class="expl-skeleton" style="width:95%"></div>
+    <div class="expl-skeleton" style="width:70%"></div>
+    <div class="expl-skeleton" style="width:88%"></div>
+    <div class="expl-skeleton" style="width:60%"></div>
+  </div>`;
+
+  const optKeys = Object.keys(q.options);
+  const optLines = optKeys.map(k=>`(${k}) ${q.options[k]}`).join('\n');
+
+  const userPrompt = `你是遙控無人機（RPAS）專業操作證學科考試的輔導老師。以下是一道考題，請針對每個選項，用繁體中文給出簡潔的解釋（2–4句），說明該選項的定義、原理或為何正確/錯誤。格式必須嚴格回傳 JSON，key 為選項字母，value 為解釋字串，不要包含任何其他文字或 markdown。\n\n題目：${q.q}\n選項：\n${optLines}\n正確答案：${correctKey}\n\n只回傳 JSON，例如：{"A":"解釋...","B":"解釋...","C":"解釋...","D":"解釋..."}`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1200,
+        system: '你是遙控無人機考試輔導老師，只回傳純 JSON，不含 markdown 或其他文字。',
+        messages: [{ role: 'user', content: userPrompt }]
+      })
+    });
+
+    if(!res.ok){
+      const err = await res.json().catch(()=>({}));
+      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const raw = (data.content||[]).find(b=>b.type==='text')?.text || '';
+    const cleaned = raw.replace(/```json|```/gi,'').trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if(!jsonMatch) throw new Error('回應格式錯誤');
+    const explanations = JSON.parse(jsonMatch[0]);
+
+    explCache[cacheKey] = explanations;
+    renderExplanations(q, chosenKey, correctKey, explanations);
+
+  } catch(e) {
+    // 任何 API 失敗，改用本地規則產生基本解析
+    const fallback = buildFallbackExplanation(q, correctKey);
+    explCache[cacheKey] = fallback;
+    renderExplanations(q, chosenKey, correctKey, fallback);
+  }
+}
+
+// 本地 fallback：根據正確答案與選項內容，組合出基礎解析
+function buildFallbackExplanation(q, correctKey){
+  const result = {};
+  const opts = Object.keys(q.options);
+  const correctText = q.options[correctKey] || '';
+
+  // 判斷是否有「以上皆是」或「以上皆非」
+  const allCorrect = /以上皆是|以上皆對|均正確/.test(correctText);
+  const allWrong   = /以上皆非|以上皆錯|均不正確/.test(correctText);
+
+  opts.forEach(k => {
+    const txt = q.options[k] || '';
+    const isCorrect = k === correctKey;
+
+    if(isCorrect){
+      if(allCorrect){
+        result[k] = `「以上皆是」為正確答案，代表本題其他選項（A、B、C）所述內容均符合題目要求，在遙控無人機法規或操作規範中皆屬正確。`;
+      } else if(allWrong){
+        result[k] = `「以上皆非」為正確答案，代表本題其他選項所述內容均不符合規定或有誤，在遙控無人機相關法規中找不到對應的正確根據。`;
+      } else {
+        result[k] = `【正確答案】${txt} — 此選項符合民用航空法規或遙控無人機操作規範的明確規定。請記住這個正確答案，考試時需能直接辨認。`;
+      }
+    } else {
+      // 干擾選項分析
+      const isAlmostRight = /皆是|皆對|均正確/.test(txt);
+      const isNegative    = /不得|禁止|不可|不應|不需|不必/.test(txt);
+      const isPartial     = opts.filter(x=>x!==k&&x!==correctKey).some(x=>q.options[x]&&txt.includes(q.options[x].slice(0,4)));
+
+      if(allCorrect){
+        result[k] = `此選項為正確選項之一，但因正確答案為「以上皆是」，單選此項會漏掉其他同樣正確的描述，故不是最完整的答案。`;
+      } else if(isNegative){
+        result[k] = `此選項描述含有否定語意（${txt.slice(0,12)}…），與題目要求的正確作法或規定相悖，屬於錯誤的干擾選項。`;
+      } else {
+        result[k] = `此選項「${txt}」在本題語境下為錯誤或不完整的敘述，與遙控無人機相關法規、標準或操作規範不符，請留意與正確答案的差異。`;
+      }
+    }
+  });
+
+  return result;
+}
+
+// Store current question ref for retry
+let currentExplQ = null, currentExplChosen = '', currentExplCorrect = '';
+
+function renderExplanations(q, chosenKey, correctKey, explanations){
+  const body = document.getElementById('explanation-body');
+  if(!body) return;
+  const optKeys = Object.keys(q.options);
+  
+  const cards = optKeys.map(k=>{
+    const isCorrect = k === correctKey;
+    const isChosen = k === chosenKey;
+    const isWrongChosen = isChosen && !isCorrect;
+    
+    let cardClass = 'opt-expl-card ';
+    let tagText = '';
+    if(isCorrect && isChosen){ cardClass+='is-correct'; tagText='✓ 正確答案（您的選擇）'; }
+    else if(isCorrect && !isChosen){ cardClass+='is-correct'; tagText='✓ 正確答案'; }
+    else if(isWrongChosen){ cardClass+='is-wrong-chosen'; tagText='✗ 您的選擇（錯誤）'; }
+    else { cardClass+='is-unchosen'; tagText='選項 '+k; }
+    
+    const desc = explanations[k] || '無解釋資料。';
+    
+    return `<div class="${cardClass}">
+      <div class="opt-expl-head">
+        <div class="opt-expl-letter">${k}</div>
+        <div class="opt-expl-option-text">${q.options[k]}</div>
+        <span class="opt-expl-tag">${tagText}</span>
+      </div>
+      <div class="opt-expl-desc">${desc}</div>
+    </div>`;
+  }).join('');
+  
+  body.innerHTML = `<div class="opt-expl-list">${cards}</div>`;
 }
 
 // ── TTS ───────────────────────────────────────────────────────────────────
